@@ -3,9 +3,9 @@
 // Falls back to file sessions if DB is unavailable.
 if (!class_exists('DbSessionHandler')) {
     class DbSessionHandler implements SessionHandlerInterface {
-        private int $ttl;
-        public function __construct(int $ttl = 604800) { // 7 days default
-            $this->ttl = max(300, $ttl);
+        private $ttl; // avoid typed properties for PHP < 7.4
+        public function __construct($ttl = 604800) { // 7 days default
+            $this->ttl = max(300, (int)$ttl);
         }
         private function db() {
             // Lazy import to avoid hard dependency if DB is down
@@ -21,9 +21,12 @@ if (!class_exists('DbSessionHandler')) {
                 INDEX (expires)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         }
-        public function open($savePath, $sessionName): bool { return true; }
-        public function close(): bool { return true; }
-        public function read($id): string {
+        #[\ReturnTypeWillChange]
+        public function open($savePath, $sessionName) { return true; }
+        #[\ReturnTypeWillChange]
+        public function close() { return true; }
+        #[\ReturnTypeWillChange]
+        public function read($id) {
             try {
                 $db = $this->db();
                 $this->ensureTable($db);
@@ -42,7 +45,8 @@ if (!class_exists('DbSessionHandler')) {
             } catch (Throwable $e) { /* fallback to empty */ }
             return '';
         }
-        public function write($id, $data): bool {
+        #[\ReturnTypeWillChange]
+        public function write($id, $data) {
             try {
                 $db = $this->db();
                 $this->ensureTable($db);
@@ -57,11 +61,13 @@ if (!class_exists('DbSessionHandler')) {
                 return $ok;
             } catch (Throwable $e) { return false; }
         }
-        public function destroy($id): bool {
+        #[\ReturnTypeWillChange]
+        public function destroy($id) {
             try { $db = $this->db(); $stmt = $db->prepare("DELETE FROM php_sessions WHERE id = ?"); $stmt->bind_param('s', $id); $stmt->execute(); $stmt->close(); $db->close(); } catch (Throwable $e) {}
             return true;
         }
-        public function gc($max_lifetime): int|false {
+        #[\ReturnTypeWillChange]
+        public function gc($max_lifetime) {
             try { $db = $this->db(); $db->query("DELETE FROM php_sessions WHERE expires <= UNIX_TIMESTAMP()"); $affected = $db->affected_rows; $db->close(); return max(0, (int)$affected); } catch (Throwable $e) { return 0; }
         }
     }
