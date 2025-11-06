@@ -1,4 +1,72 @@
 <?php
+// Use MySQL-backed sessions on hosting to persist across instances.
+// Falls back to file sessions if DB is unavailable.
+if (!class_exists('DbSessionHandler')) {
+    class DbSessionHandler implements SessionHandlerInterface {
+        private int $ttl;
+        public function __construct(int $ttl = 604800) { // 7 days default
+            $this->ttl = max(300, $ttl);
+        }
+        private function db() {
+            // Lazy import to avoid hard dependency if DB is down
+            require_once __DIR__ . '/db.php';
+            return get_db_connection();
+        }
+        private function ensureTable($db): void {
+            static $done = false; if ($done) return; $done = true;
+            $db->query("CREATE TABLE IF NOT EXISTS php_sessions (
+                id VARCHAR(128) NOT NULL PRIMARY KEY,
+                data LONGTEXT NOT NULL,
+                expires INT UNSIGNED NOT NULL,
+                INDEX (expires)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        }
+        public function open($savePath, $sessionName): bool { return true; }
+        public function close(): bool { return true; }
+        public function read($id): string {
+            try {
+                $db = $this->db();
+                $this->ensureTable($db);
+                $stmt = $db->prepare("SELECT data FROM php_sessions WHERE id = ? AND expires > UNIX_TIMESTAMP()");
+                $stmt->bind_param('s', $id);
+                $stmt->execute();
+                $stmt->bind_result($data);
+                if ($stmt->fetch()) {
+                    $stmt->close();
+                    $db->close();
+                    $raw = base64_decode($data, true);
+                    return $raw !== false ? $raw : '';
+                }
+                $stmt->close();
+                $db->close();
+            } catch (Throwable $e) { /* fallback to empty */ }
+            return '';
+        }
+        public function write($id, $data): bool {
+            try {
+                $db = $this->db();
+                $this->ensureTable($db);
+                $encoded = base64_encode($data);
+                $expires = time() + $this->ttl;
+                $stmt = $db->prepare("INSERT INTO php_sessions (id, data, expires) VALUES (?, ?, ?) 
+                    ON DUPLICATE KEY UPDATE data = VALUES(data), expires = VALUES(expires)");
+                $stmt->bind_param('ssi', $id, $encoded, $expires);
+                $ok = $stmt->execute();
+                $stmt->close();
+                $db->close();
+                return $ok;
+            } catch (Throwable $e) { return false; }
+        }
+        public function destroy($id): bool {
+            try { $db = $this->db(); $stmt = $db->prepare("DELETE FROM php_sessions WHERE id = ?"); $stmt->bind_param('s', $id); $stmt->execute(); $stmt->close(); $db->close(); } catch (Throwable $e) {}
+            return true;
+        }
+        public function gc($max_lifetime): int|false {
+            try { $db = $this->db(); $db->query("DELETE FROM php_sessions WHERE expires <= UNIX_TIMESTAMP()"); $affected = $db->affected_rows; $db->close(); return max(0, (int)$affected); } catch (Throwable $e) { return 0; }
+        }
+    }
+}
+
 // Harden session cookie settings before starting the session
 if (session_status() !== PHP_SESSION_ACTIVE) {
     // Ensure sessions are stored in a stable, writable path (helps on hosts where default /tmp isn't shared/persistent)
@@ -31,6 +99,15 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
             'httponly' => true,
             'samesite' => 'Lax',
         ]);
+    }
+    // Choose DB-backed sessions for better persistence on hosting (env override: USE_DB_SESSIONS=0 to disable)
+    $useDbSessions = getenv('USE_DB_SESSIONS');
+    if ($useDbSessions === false || $useDbSessions === '' || $useDbSessions === '1') {
+        $ttl = (int)(getenv('SESSION_LIFETIME') ?: 604800);
+        try {
+            $handler = new DbSessionHandler($ttl);
+            @session_set_save_handler($handler, true);
+        } catch (Throwable $e) { /* fall back silently */ }
     }
     // Use a custom session name to avoid conflicts with other PHP apps on the same host
     if (function_exists('session_name')) {
