@@ -53,30 +53,26 @@ $status = $data['status'] ?? 'online';
 $source = $data['source'] ?? 'esp32';
 $reading_timestamp = $data['timestamp'] ?? $data['reading_timestamp'] ?? date('Y-m-d H:i:s');
 
-// Normalize/massage incoming values for compatibility
-// 1) Map airQuality string (Good/Moderate/Bad) to numeric bands if needed
+// Normalize values
+// Map airQuality string labels to representative numeric bands
 $mapAirQuality = function ($v) {
     if ($v === null) return null;
     if (is_numeric($v)) return (int)$v;
     $s = strtolower(trim((string)$v));
     switch ($s) {
-        case 'good':
-            return 50;   // representative AQI band center
-        case 'moderate':
-            return 100;  // representative AQI band center
+        case 'good':       return 50;
+        case 'moderate':   return 100;
         case 'bad':
-        case 'unhealthy':
-            return 200;  // representative AQI band center
-        default:
-            return null; // unknown label -> store null
+        case 'unhealthy':  return 200;
+        default:           return null;
     }
 };
 $air_quality = $mapAirQuality($air_quality_raw);
 
-// 2) Derive waterPercent from floodLevel if not provided
-if (empty($water_percent) && !empty($flood_level)) {
-    $lvl = strtolower($flood_level);
-    if (strpos($lvl, 'level 3') !== false || strpos($lvl, 'full') !== false || strpos($lvl, 'waist') !== false) {
+// Derive waterPercent from floodLevel if not provided
+if ((empty($water_percent) || !is_numeric($water_percent)) && !empty($flood_level)) {
+    $lvl = strtolower((string)$flood_level);
+    if (strpos($lvl, 'level 3') !== false || strpos($lvl, 'waist') !== false || strpos($lvl, 'full') !== false) {
         $water_percent = 100;
     } elseif (strpos($lvl, 'level 2') !== false || strpos($lvl, 'knee') !== false) {
         $water_percent = 66;
@@ -86,12 +82,11 @@ if (empty($water_percent) && !empty($flood_level)) {
         $water_percent = 0;
     }
 }
-
-// 3) Type safety casts
+// Type casts
 $temperature = is_numeric($temperature) ? (float)$temperature : null;
-$humidity    = is_numeric($humidity) ? (float)$humidity : null;
+$humidity = is_numeric($humidity) ? (float)$humidity : null;
 $water_percent = is_numeric($water_percent) ? (int)$water_percent : 0;
-$gas_analog  = is_numeric($gas_analog) ? (int)$gas_analog : null;
+$gas_analog = is_numeric($gas_analog) ? (int)$gas_analog : null;
 $gas_voltage = is_numeric($gas_voltage) ? (float)$gas_voltage : null;
 
 // Validate barangay
