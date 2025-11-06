@@ -1,4 +1,6 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
 #include "DHT.h"
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -6,6 +8,9 @@
 // ==== WiFi Configuration ====
 const char* ssid = "iPhonexxx";
 const char* password = "asd12345";
+
+// ==== Server Configuration (HTTPS endpoint) ====
+const char* endpoint = "https://go-marikina.wasmer.app/api/save_sensor_data.php"; // change if needed
 
 // ==== Sensor Configuration ====
 #define DHTPIN 4
@@ -26,6 +31,10 @@ LiquidCrystal_I2C lcd(0x27, 16, 4);  // Address 0x27 for 16x4 LCD
 bool alertActive = false;
 unsigned long alertStart = 0;
 const unsigned long ALERT_DURATION = 5000;
+
+// === Uplink (HTTP POST) Control ===
+unsigned long lastSendTime = 0;
+const unsigned long POST_INTERVAL_MS = 60000; // 60 seconds
 
 // === LCD Rotation Control ===
 unsigned long lastDisplaySwitch = 0;
@@ -100,6 +109,56 @@ void setup() {
   Serial.println("HTTP server started");
 }
 
+// ---- Helper: Convert gas analog to coarse AQI-like bucket (optional, server accepts numeric) ----
+static inline int computeAirQualityIndex(int gasAnalog) {
+  // Map raw 0..4095 to 0..500 (approximate)
+  int aqi = map(gasAnalog, 0, 4095, 0, 500);
+  if (aqi < 0) aqi = 0; if (aqi > 500) aqi = 500;
+  return aqi;
+}
+
+// ---- Helper: Robust HTTPS POST to server ----
+bool sendToServer(float temperature, float humidity, int airQuality, const String& floodLevel, int waterPercent, int gasAnalog, float gasVoltage) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected; skipping POST");
+    return false;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure(); // Accept all certs (you can pin a CA/fingerprint later)
+
+  HTTPClient http;
+  bool ok = false;
+  if (http.begin(client, endpoint)) {
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Accept", "application/json");
+    http.setUserAgent("ESP32-IoT/1.0");
+    http.setTimeout(12000); // 12s
+
+    String payload = "{";
+    payload += "\"barangay\":\"Malanday\",";
+    payload += "\"device_ip\":\"" + WiFi.localIP().toString() + "\",";
+    payload += "\"temperature\":" + String(temperature, 1) + ",";
+    payload += "\"humidity\":" + String(humidity, 1) + ",";
+    payload += "\"airQuality\":" + String(airQuality) + ","; // numeric is fine
+    payload += "\"gasAnalog\":" + String(gasAnalog) + ",";
+    payload += "\"gasVoltage\":" + String(gasVoltage, 2) + ",";
+    payload += "\"floodLevel\":\"" + floodLevel + "\",";
+    payload += "\"waterPercent\":" + String(waterPercent) + ",";
+    payload += "\"status\":\"online\",\"source\":\"esp32\"";
+    payload += "}";
+
+    int httpCode = http.POST(payload);
+    String response = http.getString();
+    Serial.printf("\n📡 POST %d: %s\n", httpCode, response.c_str());
+    ok = (httpCode >= 200 && httpCode < 300);
+    http.end();
+  } else {
+    Serial.println("❌ HTTP begin() failed");
+  }
+  return ok;
+}
+
 // === Loop ===
 void loop() {
   updateFloodAlert();
@@ -140,6 +199,18 @@ void loop() {
     lcdMessage = "SAFE: No Flood";
     waterPercent = 0;
   } 
+
+  // ---- Periodic HTTPS uplink ----
+  if (millis() - lastSendTime >= POST_INTERVAL_MS) {
+    int airQuality = computeAirQualityIndex(gas);
+    bool posted = sendToServer(temperature, humidity, airQuality, floodLevel, waterPercent, gas, gasVoltage);
+    if (!posted) {
+      // Best-effort: quick retry once after short delay
+      delay(500);
+      posted = sendToServer(temperature, humidity, airQuality, floodLevel, waterPercent, gas, gasVoltage);
+    }
+    lastSendTime = millis();
+  }
   else if (floatCount == 1) {
     floodLevel = "Level 1 (Gutter Deep)";
     lcdMessage = "CAUTION: Gutter";
