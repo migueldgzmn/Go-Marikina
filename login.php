@@ -17,7 +17,18 @@ if ($email === '' || $password === '') {
 }
 
 // Optional legacy admin login (disabled by default in prod). Enable by setting env ALLOW_LEGACY_ADMIN=1
+// Allow legacy admin if explicitly enabled, or when no users exist yet (bootstrap mode)
 $__ALLOW_LEGACY_ADMIN = getenv('ALLOW_LEGACY_ADMIN') === '1';
+if (!$__ALLOW_LEGACY_ADMIN) {
+    try {
+        $rs = $conn->query("SELECT COUNT(*) AS n FROM users");
+        if ($rs && ($row = $rs->fetch_assoc())) {
+            $n = (int)($row['n'] ?? 0);
+            if ($n === 0) { $__ALLOW_LEGACY_ADMIN = true; }
+        }
+        if ($rs) { $rs->close(); }
+    } catch (Throwable $e) { /* ignore */ }
+}
 if ($__ALLOW_LEGACY_ADMIN && $email === ADMIN_EMAIL && $password === ADMIN_PASSWORD) {
     if (session_status() === PHP_SESSION_ACTIVE) { @session_regenerate_id(true); }
     $_SESSION['user'] = [
