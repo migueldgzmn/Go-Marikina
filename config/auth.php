@@ -10,7 +10,16 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
     } catch (Throwable $e) { $savePath = sys_get_temp_dir(); }
     if (is_string($savePath) && $savePath !== '') { @session_save_path($savePath); }
 
-    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['SERVER_PORT'] ?? '') === '443');
+    // Detect HTTPS robustly (works behind proxies/CDNs)
+    $xfProto = strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
+    $xfSsl   = strtolower((string)($_SERVER['HTTP_X_FORWARDED_SSL'] ?? ''));
+    $cfVis   = (string)($_SERVER['HTTP_CF_VISITOR'] ?? ''); // e.g. {"scheme":"https"}
+    $cfHttps = stripos($cfVis, '"https"') !== false;
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['SERVER_PORT'] ?? '') === '443')
+        || ($xfProto === 'https')
+        || ($xfSsl === 'on')
+        || $cfHttps;
     // Ensure cookies work across the whole site and are HTTP-only
     // SameSite=Lax allows POST->redirect flows to carry the cookie
     if (function_exists('session_set_cookie_params')) {
@@ -34,6 +43,10 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
         @ini_set('session.cookie_httponly', '1');
         // Allow Lax cookie for top-level POST redirects; upgrade to Strict if app is fully same-site navigations
         @ini_set('session.cookie_samesite', 'Lax');
+        // Keep server-side session files around longer to reduce unexpected expirations
+        @ini_set('session.gc_maxlifetime', '604800'); // 7 days
+        @ini_set('session.gc_probability', '1');
+        @ini_set('session.gc_divisor', '100');
     }
     session_start();
 }

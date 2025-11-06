@@ -16,6 +16,7 @@ $confirm_password = trim($_POST['confirm_password'] ?? '');
 
 if ($email === '' || $password === '' || $first_name === '' || $last_name === '' || $mobile === '') {
     $_SESSION['login_error'] = 'Please fill in all required fields.';
+    if (session_status() === PHP_SESSION_ACTIVE) { @session_write_close(); }
     header('Location: profile.php');
     exit;
 }
@@ -23,6 +24,7 @@ if ($email === '' || $password === '' || $first_name === '' || $last_name === ''
 // Server-side: enforce PH format +63XXXXXXXXXX (10 digits after +63) and no spaces
 if (!preg_match('/^\+63\d{10}$/', $mobile)) {
     $_SESSION['login_error'] = 'Mobile must be +63 followed by 10 digits (no spaces).';
+    if (session_status() === PHP_SESSION_ACTIVE) { @session_write_close(); }
     header('Location: profile.php');
     exit;
 }
@@ -30,6 +32,7 @@ if (!preg_match('/^\+63\d{10}$/', $mobile)) {
 // Server-side: validate email has domain and no spaces
 if (!preg_match('/^[^\s@]+@[^\s@]+\.[^\s@]+$/', $email)) {
     $_SESSION['login_error'] = 'Please enter a valid email address (must include a domain, no spaces).';
+    if (session_status() === PHP_SESSION_ACTIVE) { @session_write_close(); }
     header('Location: profile.php');
     exit;
 }
@@ -37,6 +40,7 @@ if (!preg_match('/^[^\s@]+@[^\s@]+\.[^\s@]+$/', $email)) {
 // Server-side: validate password: min 8, 1 uppercase, 1 number, 1 special, no spaces
 if (!preg_match('/^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9])(?!.*\s).{8,}$/', $password)) {
     $_SESSION['login_error'] = 'Password must be 8+ characters, include an uppercase letter, a number, a special character, and no spaces.';
+    if (session_status() === PHP_SESSION_ACTIVE) { @session_write_close(); }
     header('Location: profile.php');
     exit;
 }
@@ -44,6 +48,7 @@ if (!preg_match('/^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9])(?!.*\s).{8,}$/', $passw
 // Server-side: confirm password must match
 if ($confirm_password === '' || $confirm_password !== $password) {
     $_SESSION['login_error'] = 'Passwords do not match.';
+    if (session_status() === PHP_SESSION_ACTIVE) { @session_write_close(); }
     header('Location: profile.php');
     exit;
 }
@@ -71,6 +76,7 @@ if ($stmt->num_rows > 0) {
     if ($stmt3->num_rows > 0) { $dupeMsg = 'Mobile number already exists.'; }
     $stmt3->close();
     $_SESSION['login_error'] = $dupeMsg;
+    if (session_status() === PHP_SESSION_ACTIVE) { @session_write_close(); }
     header('Location: profile.php');
     exit;
 }
@@ -95,6 +101,7 @@ if ($stmt->execute()) {
     ];
 
     unset($_SESSION['login_error']);
+    if (session_status() === PHP_SESSION_ACTIVE) { @session_write_close(); }
     header('Location: profile.php');
     exit;
 } else {
@@ -104,6 +111,7 @@ if ($stmt->execute()) {
     $_SESSION['login_error'] = $DBG && $detail
         ? ('Error creating account: ' . $detail)
         : 'Error creating account. Please try again.';
+    if (session_status() === PHP_SESSION_ACTIVE) { @session_write_close(); }
     header('Location: profile.php');
     exit;
 }
