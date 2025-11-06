@@ -82,6 +82,10 @@ if ((empty($water_percent) || !is_numeric($water_percent)) && !empty($flood_leve
         $water_percent = 0;
     }
 }
+<<<<<<< HEAD
+=======
+
+>>>>>>> 5436daf4027503aaaed5c60aaa69b7f27845e081
 // Type casts
 $temperature = is_numeric($temperature) ? (float)$temperature : null;
 $humidity = is_numeric($humidity) ? (float)$humidity : null;
