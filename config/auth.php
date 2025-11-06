@@ -2,7 +2,7 @@
 // Use MySQL-backed sessions on hosting to persist across instances.
 // Falls back to file sessions if DB is unavailable.
 if (!class_exists('DbSessionHandler')) {
-    class DbSessionHandler implements SessionHandlerInterface {
+    class DbSessionHandler {
         private $ttl; // avoid typed properties for PHP < 7.4
         public function __construct($ttl = 604800) { // 7 days default
             $this->ttl = max(300, (int)$ttl);
@@ -21,11 +21,8 @@ if (!class_exists('DbSessionHandler')) {
                 INDEX (expires)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
         }
-        #[\ReturnTypeWillChange]
         public function open($savePath, $sessionName) { return true; }
-        #[\ReturnTypeWillChange]
         public function close() { return true; }
-        #[\ReturnTypeWillChange]
         public function read($id) {
             try {
                 $db = $this->db();
@@ -45,7 +42,6 @@ if (!class_exists('DbSessionHandler')) {
             } catch (Throwable $e) { /* fallback to empty */ }
             return '';
         }
-        #[\ReturnTypeWillChange]
         public function write($id, $data) {
             try {
                 $db = $this->db();
@@ -61,12 +57,10 @@ if (!class_exists('DbSessionHandler')) {
                 return $ok;
             } catch (Throwable $e) { return false; }
         }
-        #[\ReturnTypeWillChange]
         public function destroy($id) {
             try { $db = $this->db(); $stmt = $db->prepare("DELETE FROM php_sessions WHERE id = ?"); $stmt->bind_param('s', $id); $stmt->execute(); $stmt->close(); $db->close(); } catch (Throwable $e) {}
             return true;
         }
-        #[\ReturnTypeWillChange]
         public function gc($max_lifetime) {
             try { $db = $this->db(); $db->query("DELETE FROM php_sessions WHERE expires <= UNIX_TIMESTAMP()"); $affected = $db->affected_rows; $db->close(); return max(0, (int)$affected); } catch (Throwable $e) { return 0; }
         }
@@ -112,7 +106,16 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
         $ttl = (int)(getenv('SESSION_LIFETIME') ?: 604800);
         try {
             $handler = new DbSessionHandler($ttl);
-            @session_set_save_handler($handler, true);
+            // Register using callable style for broad PHP compatibility
+            @session_set_save_handler(
+                [$handler, 'open'],
+                [$handler, 'close'],
+                [$handler, 'read'],
+                [$handler, 'write'],
+                [$handler, 'destroy'],
+                [$handler, 'gc']
+            );
+            register_shutdown_function('session_write_close');
         } catch (Throwable $e) { /* fall back silently */ }
     }
     // Use a custom session name to avoid conflicts with other PHP apps on the same host
