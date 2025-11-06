@@ -21,6 +21,8 @@ require_once __DIR__ . '/../includes/api_bootstrap.php';
 $status = isset($_GET['status']) ? trim((string)$_GET['status']) : '';
 $category = isset($_GET['category']) ? trim((string)$_GET['category']) : '';
 $mine = isset($_GET['mine']) ? (($_GET['mine'] === '1' || strtolower($_GET['mine']) === 'true') ? 1 : 0) : 0;
+// Optional moderation filter for admins: moderation=pending|approved|denied|all
+$moderation = isset($_GET['moderation']) ? trim((string)$_GET['moderation']) : '';
 
 $userId = null;
 if ($mine && is_logged_in()) {
@@ -35,6 +37,31 @@ $types = '';
 if ($status !== '') { $where[] = 'status = ?'; $params[] = $status; $types .= 's'; }
 if ($category !== '') { $where[] = 'category = ?'; $params[] = $category; $types .= 's'; }
 if ($mine && $userId) { $where[] = 'user_id = ?'; $params[] = $userId; $types .= 'i'; }
+
+// Public default: only approved reports if moderation is enabled
+$hasModeration = false;
+try {
+    $chk = $conn->query("SHOW COLUMNS FROM reports LIKE 'moderation_status'");
+    $hasModeration = ($chk && $chk->num_rows > 0);
+    if ($chk) { $chk->close(); }
+} catch (Throwable $e) { $hasModeration = false; }
+
+if ($hasModeration) {
+    if (is_admin()) {
+        // Admin can optionally filter by moderation status
+        if ($moderation !== '' && strtolower($moderation) !== 'all') {
+            $where[] = 'moderation_status = ?';
+            $params[] = strtolower($moderation);
+            $types .= 's';
+        }
+    } elseif ($mine && $userId) {
+        // Users viewing their own reports see all moderation states
+        // no extra filter
+    } else {
+        // Public view: only approved
+        $where[] = "moderation_status = 'approved'";
+    }
+}
 
 $sql = 'SELECT id, user_id, title, category, description, location, image_path, status, created_at FROM reports';
 if (!empty($where)) {

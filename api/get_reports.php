@@ -52,6 +52,17 @@ try {
 
     $where = ['latitude IS NOT NULL', 'longitude IS NOT NULL'];
 
+    // Only include approved reports publicly when moderation is enabled
+    $hasModeration = false;
+    try {
+        $chk = $conn->query("SHOW COLUMNS FROM reports LIKE 'moderation_status'");
+        $hasModeration = ($chk && $chk->num_rows > 0);
+        if ($chk) { $chk->close(); }
+    } catch (Throwable $e) { $hasModeration = false; }
+    if ($hasModeration) {
+        $where[] = "moderation_status = 'approved'";
+    }
+
     $params = [];
     // Validate numeric inputs before including them in SQL
     if ($minLat !== null && is_numeric($minLat)) { $where[] = 'latitude >= ' . floatval($minLat); }

@@ -29,7 +29,19 @@ $announcementCount = is_array($announcements) ? count($announcements) : 0;
 // Load reports from DB for consistency across users
 $reports = [];
 try {
-    $sql = "SELECT id, title, category, description, location, latitude, longitude, image_path, status, created_at FROM reports ORDER BY created_at DESC LIMIT 200";
+    // Only show approved reports publicly when moderation is enabled
+    $hasModeration = false;
+    try {
+        $chk = $conn->query("SHOW COLUMNS FROM reports LIKE 'moderation_status'");
+        $hasModeration = ($chk && $chk->num_rows > 0);
+        if ($chk) { $chk->close(); }
+    } catch (Throwable $e) { $hasModeration = false; }
+
+    $sql = "SELECT id, title, category, description, location, latitude, longitude, image_path, status, created_at FROM reports";
+    if ($hasModeration) {
+        $sql .= " WHERE moderation_status = 'approved'";
+    }
+    $sql .= " ORDER BY created_at DESC LIMIT 200";
     $res = $conn->query($sql);
     if ($res) {
         while ($r = $res->fetch_assoc()) {

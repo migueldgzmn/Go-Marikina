@@ -19,7 +19,16 @@ if (is_logged_in()) {
 
     // Load user's reports
     try {
-        $stmt2 = $conn->prepare("SELECT id, title, category, description, location, latitude, longitude, image_path, status, created_at FROM reports WHERE user_id = ? ORDER BY created_at DESC LIMIT 200");
+        // Include moderation status if available
+        $hasModeration = false;
+        try {
+            $chk = $conn->query("SHOW COLUMNS FROM reports LIKE 'moderation_status'");
+            $hasModeration = ($chk && $chk->num_rows > 0);
+            if ($chk) { $chk->close(); }
+        } catch (Throwable $e) { $hasModeration = false; }
+
+        $sqlReports = "SELECT id, title, category, description, location, latitude, longitude, image_path, status" . ($hasModeration ? ", moderation_status" : "") . ", created_at FROM reports WHERE user_id = ? ORDER BY created_at DESC LIMIT 200";
+        $stmt2 = $conn->prepare($sqlReports);
         $stmt2->bind_param("i", $user_id);
         $stmt2->execute();
         $res2 = $stmt2->get_result();
@@ -155,6 +164,9 @@ if (is_logged_in()) {
                                     $datasetStatus = str_replace('-', '_', $rawStatus);
                                     $statusLabel = status_label($rawStatus);
                                     $statusModifier = status_chip_modifier($rawStatus);
+                                    $modRaw = strtolower((string)($report['moderation_status'] ?? 'approved'));
+                                    $modLabel = moderation_label($modRaw);
+                                    $modModifier = moderation_chip_modifier($modRaw);
 
                                     $titleRaw = (string)($report['title'] ?? 'Citizen report');
                                     $titleDisplay = htmlspecialchars($titleRaw, ENT_QUOTES, 'UTF-8');
@@ -249,6 +261,9 @@ if (is_logged_in()) {
                                             </button>
                                             <span class="chip chip-category"><?php echo $categoryDisplay; ?></span>
                                             <span class="chip chip-status <?php echo $statusModifierDisplay; ?>"><?php echo $statusLabelDisplay; ?></span>
+                                            <?php if ($modRaw !== 'approved'): ?>
+                                                <span class="chip chip-moderation <?php echo htmlspecialchars($modModifier, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars($modLabel, ENT_QUOTES, 'UTF-8'); ?></span>
+                                            <?php endif; ?>
                                         </div>
                                     </header>
                                             <?php if ($summaryTrim !== ''): ?>

@@ -5,6 +5,30 @@ require_admin();
 // Non-JS fallback: allow status updates/archives via POST to this page
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
+    // Admin-only moderation (approve/deny)
+    if ($action === 'moderate') {
+        $reportId = (int)($_POST['report_id'] ?? 0);
+        $decision = strtolower(trim((string)($_POST['decision'] ?? '')));
+        $notes = trim((string)($_POST['notes'] ?? ''));
+        if ($reportId && in_array($decision, ['approve','deny'], true)) {
+            // Check moderation columns exist
+            $hasModeration = false;
+            try {
+                $chk = $conn->query("SHOW COLUMNS FROM reports LIKE 'moderation_status'");
+                $hasModeration = ($chk && $chk->num_rows > 0);
+                if ($chk) { $chk->close(); }
+            } catch (Throwable $e) { $hasModeration = false; }
+            if ($hasModeration) {
+                $moderationStatus = $decision === 'approve' ? 'approved' : 'denied';
+                $adminId = (int)((current_user())['id'] ?? 0);
+                $stmt = $conn->prepare('UPDATE reports SET moderation_status = ?, moderated_by = ?, moderated_at = NOW(), moderation_notes = ? WHERE id = ?');
+                $stmt->bind_param('sisi', $moderationStatus, $adminId, $notes, $reportId);
+                $stmt->execute();
+                $stmt->close();
+                $_SESSION['admin_feedback'] = $moderationStatus === 'approved' ? 'Report approved — now visible on dashboard.' : 'Report denied — hidden from public.';
+            }
+        }
+    }
 
     if ($action === 'update_status') {
         $reportId = (int)($_POST['report_id'] ?? 0);
@@ -60,23 +84,61 @@ $statusCounts = [
     'in_progress' => 0,
     'solved' => 0,
 ];
+$pendingModerationCount = 0;
 $latestReport = null;
 $categories = [];
+$pendingReports = [];
+// Detect moderation feature
+$hasModeration = false;
+try {
+    $chk = $conn->query("SHOW COLUMNS FROM reports LIKE 'moderation_status'");
+    $hasModeration = ($chk && $chk->num_rows > 0);
+    if ($chk) { $chk->close(); }
+} catch (Throwable $e) { $hasModeration = false; }
 
 try {
     // Totals and status counts (for summary cards)
-    if ($resCnt = $conn->query('SELECT COUNT(*) AS c FROM reports')) {
+    $wherePublic = '';
+    if ($hasModeration) { $wherePublic = " WHERE moderation_status = 'approved'"; }
+    if ($resCnt = $conn->query('SELECT COUNT(*) AS c FROM reports' . $wherePublic)) {
         $rowCnt = $resCnt->fetch_assoc();
         $totalReports = (int)($rowCnt['c'] ?? 0);
         $resCnt->close();
     }
-    if ($resSC = $conn->query("SELECT status, COUNT(*) AS c FROM reports GROUP BY status")) {
+    if ($resSC = $conn->query("SELECT status, COUNT(*) AS c FROM reports" . $wherePublic . " GROUP BY status")) {
         while ($row = $resSC->fetch_assoc()) {
             $st = $row['status'] ?? '';
             $c = (int)($row['c'] ?? 0);
             if (isset($statusCounts[$st])) $statusCounts[$st] = $c;
         }
         $resSC->close();
+    }
+
+    // Pending moderation queue
+    if ($hasModeration) {
+        if ($resPend = $conn->query("SELECT r.id, r.title, r.category, r.description, r.location, r.image_path, r.status, r.created_at, u.first_name, u.last_name, u.email FROM reports r LEFT JOIN users u ON u.id = r.user_id WHERE r.moderation_status = 'pending' ORDER BY r.created_at ASC LIMIT 200")) {
+            while ($r = $resPend->fetch_assoc()) {
+                $reporter = 'Resident';
+                if (!empty($r['first_name']) || !empty($r['last_name'])) {
+                    $reporter = trim(($r['first_name'] ?? '') . ' ' . ($r['last_name'] ?? ''));
+                } elseif (!empty($r['email'])) {
+                    $reporter = $r['email'];
+                }
+                $pendingReports[] = [
+                    'id' => (int)$r['id'],
+                    'title' => $r['title'],
+                    'category' => $r['category'],
+                    'reporter' => $reporter,
+                    'location' => $r['location'],
+                    'submitted_at' => $r['created_at'],
+                    'summary' => $r['description'],
+                    'image' => $r['image_path'],
+                    'status' => $r['status'],
+                ];
+            }
+            $resPend->close();
+        }
+        $pendingModerationCount = count($pendingReports);
     }
 
     // Latest report for hero card
@@ -105,9 +167,9 @@ try {
 
     // Paged list of reports for the table
     $stmt = $conn->prepare("SELECT r.id, r.title, r.category, r.description, r.location, r.latitude, r.longitude, r.image_path, r.status, r.created_at, r.user_id, u.first_name, u.last_name, u.email
-            FROM reports r
-            LEFT JOIN users u ON u.id = r.user_id
-            ORDER BY r.created_at DESC LIMIT ? OFFSET ?");
+        FROM reports r
+        LEFT JOIN users u ON u.id = r.user_id" . ($hasModeration ? " WHERE r.moderation_status = 'approved'" : '') . "
+        ORDER BY r.created_at DESC LIMIT ? OFFSET ?");
     if ($stmt) {
         $stmt->bind_param('ii', $perPage, $offset);
         $stmt->execute();
@@ -243,6 +305,83 @@ $inProgressRate = $totalReports > 0 ? (int)round(($statusCounts['in_progress'] /
                     </article>
                 </div>
             </section>
+
+            <?php if ($hasModeration): ?>
+            <section class="admin-section admin-reports" aria-labelledby="pending-heading" id="surveillance">
+                <div class="admin-section-header">
+                    <div>
+                        <h2 id="pending-heading">Surveillance: Pending reports</h2>
+                        <p class="admin-section-subtitle">Every new submission goes here for review. Approve to publish on the dashboard or deny to hide.</p>
+                    </div>
+                    <span class="admin-count"><?php echo (int)$pendingModerationCount; ?> pending</span>
+                </div>
+
+                <?php if ($pendingReports): ?>
+                    <div class="admin-table-wrapper">
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Title</th>
+                                    <th scope="col">Category</th>
+                                    <th scope="col">Reporter</th>
+                                    <th scope="col">Submitted</th>
+                                    <th scope="col">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($pendingReports as $report): ?>
+                                    <tr>
+                                        <td data-title="Title"><?php echo htmlspecialchars($report['title']); ?></td>
+                                        <td data-title="Category"><?php echo htmlspecialchars(category_label($report['category'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
+                                        <td data-title="Reporter"><?php echo htmlspecialchars($report['reporter']); ?></td>
+                                        <td data-title="Submitted"><?php echo htmlspecialchars(format_datetime_display($report['submitted_at'] ?? null), ENT_QUOTES, 'UTF-8'); ?></td>
+                                        <td data-title="Actions" style="white-space:nowrap;display:flex;gap:8px;flex-wrap:wrap;">
+                                            <form method="post" class="admin-inline-form" style="display:inline;">
+                                                <input type="hidden" name="action" value="moderate">
+                                                <input type="hidden" name="report_id" value="<?php echo (int)$report['id']; ?>">
+                                                <input type="hidden" name="decision" value="approve">
+                                                <button type="submit" class="admin-hero-button admin-hero-button--primary">Approve</button>
+                                            </form>
+                                            <form method="post" class="admin-inline-form" style="display:inline;">
+                                                <input type="hidden" name="action" value="moderate">
+                                                <input type="hidden" name="report_id" value="<?php echo (int)$report['id']; ?>">
+                                                <input type="hidden" name="decision" value="deny">
+                                                <button type="submit" class="admin-hero-button">Deny</button>
+                                            </form>
+                                            <button
+                                                type="button"
+                                                class="admin-view-report admin-view-btn"
+                                                title="View report"
+                                                aria-label="View report"
+                                                data-title="<?php echo htmlspecialchars($report['title'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                                                data-category="<?php echo htmlspecialchars($report['category'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                                                data-reporter="<?php echo htmlspecialchars($report['reporter'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                                                data-submitted="<?php echo htmlspecialchars(format_datetime_display($report['submitted_at'] ?? null), ENT_QUOTES, 'UTF-8'); ?>"
+                                                data-status="<?php echo htmlspecialchars($report['status'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                                                data-location="<?php echo htmlspecialchars($report['location'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                                                data-image="<?php echo htmlspecialchars($report['image'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                                                data-summary="<?php echo htmlspecialchars($report['summary'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+                                                    <path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                                    <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                                </svg>
+                                                <span>Preview</span>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php else: ?>
+                    <div class="admin-empty-card">
+                        <h3>Nothing to review</h3>
+                        <p>New resident submissions will appear here for approval.</p>
+                    </div>
+                <?php endif; ?>
+            </section>
+            <?php endif; ?>
 
             <section class="admin-section admin-reports" aria-labelledby="reports-heading" id="reports">
                 <div class="admin-section-header">

@@ -83,6 +83,30 @@ if (!function_exists('status_chip_modifier')) {
     }
 }
 
+if (!function_exists('moderation_label')) {
+    function moderation_label(string $status): string
+    {
+        $normalized = strtolower(trim($status));
+        return match ($normalized) {
+            'approved' => 'Approved',
+            'denied'   => 'Denied',
+            default    => 'Awaiting review',
+        };
+    }
+}
+
+if (!function_exists('moderation_chip_modifier')) {
+    function moderation_chip_modifier(string $status): string
+    {
+        $normalized = strtolower(trim($status));
+        return match ($normalized) {
+            'approved' => 'approved',
+            'denied'   => 'denied',
+            default    => 'pending',
+        };
+    }
+}
+
 if (!function_exists('category_label')) {
     /**
      * Convert stored category slugs like "public_safety" or "road-hazard"

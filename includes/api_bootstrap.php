@@ -16,6 +16,15 @@ if (file_exists(__DIR__ . '/env.php')) {
     }
 }
 
+// Force API date/time handling to Philippine time (or APP_TIMEZONE override)
+try {
+    $appTz = getenv('APP_TIMEZONE');
+    if (!$appTz || trim($appTz) === '') { $appTz = 'Asia/Manila'; }
+    if (function_exists('date_default_timezone_set')) {
+        @date_default_timezone_set($appTz);
+    }
+} catch (Throwable $e) { /* ignore */ }
+
 // Allow API endpoints to control their own caching headers; disable session nocache
 if (function_exists('session_cache_limiter')) { @session_cache_limiter(''); }
 

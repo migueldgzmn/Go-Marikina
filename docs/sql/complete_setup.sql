@@ -23,11 +23,17 @@ CREATE TABLE IF NOT EXISTS reports (
   location VARCHAR(255) NOT NULL,
   image_path VARCHAR(255) NULL,
   status ENUM('unresolved','in_progress','solved') NOT NULL DEFAULT 'unresolved',
+  moderation_status ENUM('pending','approved','denied') NOT NULL DEFAULT 'pending',
+  moderated_by INT NULL,
+  moderated_at DATETIME NULL,
+  moderation_notes TEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   latitude DECIMAL(10, 8) NULL,
   longitude DECIMAL(11, 8) NULL,
   INDEX idx_status (status),
+  INDEX idx_moderation_status (moderation_status),
+  INDEX idx_moderated_by (moderated_by),
   INDEX idx_category (category),
   INDEX idx_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

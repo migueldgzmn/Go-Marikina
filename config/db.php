@@ -17,6 +17,13 @@ try {
         http_response_code(500);
         die('Database connection unavailable. Please ensure MySQL is running.');
     }
+    // Align MySQL session time zone with PHP default (Asia/Manila by default)
+    try {
+        $tz = function_exists('date_default_timezone_get') ? @date_default_timezone_get() : 'Asia/Manila';
+        $dt = new DateTime('now', new DateTimeZone($tz ?: 'Asia/Manila'));
+        $offset = $dt->format('P'); // e.g., +08:00
+        @$conn->query("SET time_zone = '" . $conn->real_escape_string($offset) . "'");
+    } catch (Throwable $e) { /* ignore if server lacks tz tables; offset form should work */ }
 } catch (Throwable $e) {
     // Log the underlying exception (stack trace may be written to Apache error log)
     error_log('DB connection exception: ' . $e->getMessage());
@@ -42,6 +49,13 @@ function get_db_connection() {
         if ($conn->connect_error) {
             throw new Exception('DB connect error: ' . $conn->connect_error);
         }
+        // Align MySQL session time zone with PHP default (Asia/Manila by default)
+        try {
+            $tz = function_exists('date_default_timezone_get') ? @date_default_timezone_get() : 'Asia/Manila';
+            $dt = new DateTime('now', new DateTimeZone($tz ?: 'Asia/Manila'));
+            $offset = $dt->format('P');
+            @$conn->query("SET time_zone = '" . $conn->real_escape_string($offset) . "'");
+        } catch (Throwable $e) { /* ignore */ }
         return $conn;
     } catch (Throwable $e) {
         error_log('DB connection exception: ' . $e->getMessage());
